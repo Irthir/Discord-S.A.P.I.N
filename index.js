@@ -22,8 +22,11 @@ const client = new Client({
   partials: [Partials.Message, Partials.Channel, Partials.Reaction]
 })
 
+const { restore } = require('./planning')
+
 client.once('clientReady', () => {
   console.log(`Connecté en tant que ${client.user.tag}`)
+  restore()
 })
 
 client.on('interactionCreate', async interaction => {
