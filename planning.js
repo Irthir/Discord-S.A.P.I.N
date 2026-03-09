@@ -1,443 +1,373 @@
 const {
-  EmbedBuilder,
   ActionRowBuilder,
   ButtonBuilder,
-  ButtonStyle
-} = require('discord.js')
+  ButtonStyle,
+  EmbedBuilder
+} = require("discord.js")
 
-const { normaliserHoraire, parseDuree } = require('./utils')
-const { save, load } = require("./storage")
+const fs = require("fs")
+const path = require("path")
+
+const DATA_FILE = path.join(__dirname, "planning_data.json")
 
 const JOURS = {
-  lundi: "Lundi",
-  mardi: "Mardi",
-  mercredi: "Mercredi",
-  jeudi: "Jeudi",
-  vendredi: "Vendredi",
-  samedi: "Samedi",
-  dimanche: "Dimanche"
+  lun: "Lundi",
+  mar: "Mardi",
+  mer: "Mercredi",
+  jeu: "Jeudi",
+  ven: "Vendredi",
+  sam: "Samedi",
+  dim: "Dimanche"
 }
 
-const ALIAS = {
-  lun: "lundi",
-  mar: "mardi",
-  mer: "mercredi",
-  jeu: "jeudi",
-  ven: "vendredi",
-  sam: "samedi",
-  dim: "dimanche"
-}
-
-const SEMAINE = ["lundi","mardi","mercredi","jeudi","vendredi"]
-const WEEKEND = ["samedi","dimanche"]
-const HORAIRES_DEFAUT = ["20h-22h"]
-
-let activeSessions = new Map()
 let votes = new Map()
+let sessions = new Map()
+let timers = new Map()
 
-/* =========================
-   PARSER
-========================= */
+/* ------------------------ */
+/*      SAUVEGARDE          */
+/* ------------------------ */
 
-function parser(input) {
-  const args = input.trim().split(/\s+/)
-  let jours = new Set()
-  let horaires = []
+function persist() {
 
-  for (let arg of args) {
-    arg = arg.toLowerCase()
-
-    if (ALIAS[arg]) arg = ALIAS[arg]
-
-    if (arg === "semaine")
-      SEMAINE.forEach(j => jours.add(j))
-    else if (arg === "weekend")
-      WEEKEND.forEach(j => jours.add(j))
-    else if (JOURS[arg])
-      jours.add(arg)
-    else {
-      const h = normaliserHoraire(arg)
-      if (h) horaires.push(h)
-    }
+  const data = {
+    votes: [...votes.entries()].map(([id,v]) => [
+      id,
+      {
+        ...v,
+        up:[...v.up],
+        maybe:[...v.maybe],
+        down:[...v.down]
+      }
+    ]),
+    sessions: [...sessions.entries()]
   }
 
-  if (jours.size === 0)
-    Object.keys(JOURS).forEach(j => jours.add(j))
-
-  if (horaires.length === 0)
-    horaires = HORAIRES_DEFAUT
-
-  return { jours: [...jours], horaires }
+  fs.writeFileSync(DATA_FILE, JSON.stringify(data,null,2))
 }
 
-/* =========================
-   DATE COMPLETE
-========================= */
+function restore(client) {
 
-function getDateForNext(jourKey) {
-  const today = new Date()
+  if (!fs.existsSync(DATA_FILE)) return
 
-  const joursIndex = {
-    dimanche: 0,
-    lundi: 1,
-    mardi: 2,
-    mercredi: 3,
-    jeudi: 4,
-    vendredi: 5,
-    samedi: 6
+  const data = JSON.parse(fs.readFileSync(DATA_FILE))
+
+  votes = new Map(
+    data.votes.map(([id,v])=>[
+      id,
+      {
+        ...v,
+        up:new Set(v.up),
+        maybe:new Set(v.maybe),
+        down:new Set(v.down)
+      }
+    ])
+  )
+
+  sessions = new Map(data.sessions)
+
+  for (const [channelId,session] of sessions.entries()) {
+
+    const remaining = session.endTime - Date.now()
+    if (remaining <= 0) continue
+
+    const timer = setTimeout(()=>{
+
+      const channel = client.channels.cache.get(channelId)
+      if(channel) finaliserSession(channel)
+
+    },remaining)
+
+    timers.set(channelId,timer)
   }
 
-  const target = joursIndex[jourKey]
-  const diff = (target + 7 - today.getDay()) % 7
-  const next = new Date(today)
-  next.setDate(today.getDate() + diff)
+  console.log("✔ Planning restauré")
+}
 
-  return next.toLocaleDateString("fr-FR", {
-    weekday: "long",
-    day: "numeric",
-    month: "long",
-    year: "numeric"
+/* ------------------------ */
+/*      UTILITAIRES         */
+/* ------------------------ */
+
+function buildBar(value,total){
+
+  if(total===0) return "░░░░░░░░░░"
+
+  const filled=Math.round((value/total)*10)
+
+  return "█".repeat(filled)+"░".repeat(10-filled)
+}
+
+function getDateForNext(jourKey){
+
+  const today=new Date()
+  const targetIndex=Object.keys(JOURS).indexOf(jourKey)
+
+  const diff=(targetIndex-today.getDay()+7)%7||7
+
+  const target=new Date()
+  target.setDate(today.getDate()+diff)
+
+  return target.toLocaleDateString("fr-FR",{
+    weekday:"long",
+    day:"numeric",
+    month:"long",
+    year:"numeric"
   })
 }
 
-/* =========================
-   EMBED + BOUTONS
-========================= */
+function createButtons(id){
 
-function createEmbed(jourKey, horaire, voteData) {
-  return new EmbedBuilder()
-    .setTitle(`📅 ${JOURS[jourKey]} (${getDateForNext(jourKey)})`)
-    .setDescription(`⏰ ${horaire}`)
-    .addFields({
-      name: "Votes en cours",
-      value: `👍 ${voteData.up.size} | 🤔 ${voteData.maybe.size} | ❌ ${voteData.down.size}`
-    })
-    .setColor(0x5865F2)
-}
-
-function createButtons(id) {
   return new ActionRowBuilder().addComponents(
+
     new ButtonBuilder()
-      .setCustomId(`up_${id}`)
-      .setLabel("👍 Dispo")
+      .setCustomId(`vote_up_${id}`)
+      .setLabel("👍")
       .setStyle(ButtonStyle.Success),
 
     new ButtonBuilder()
-      .setCustomId(`maybe_${id}`)
-      .setLabel("🤔 Peut-être")
+      .setCustomId(`vote_maybe_${id}`)
+      .setLabel("🤔")
       .setStyle(ButtonStyle.Secondary),
 
     new ButtonBuilder()
-      .setCustomId(`down_${id}`)
-      .setLabel("❌ Indispo")
+      .setCustomId(`vote_down_${id}`)
+      .setLabel("❌")
       .setStyle(ButtonStyle.Danger)
   )
 }
 
-/* =========================
-   CREATION SESSION
-========================= */
+function createEmbed(jourKey,horaire,data){
 
-async function envoyerPlanning(interaction, jours, horaires, dureeInput) {
+  const total=data.up.size+data.maybe.size+data.down.size
 
-  const existing = [...activeSessions.values()]
-    .find(s => s.channelId === interaction.channel.id)
-
-  if (existing) {
-    return interaction.reply({
-      content: "⚠️ Un planning est déjà actif dans ce salon.",
-      flags: 64
+  return new EmbedBuilder()
+    .setTitle(`📅 ${JOURS[jourKey]} (${getDateForNext(jourKey)})`)
+    .setDescription(`⏰ ${horaire}`)
+    .addFields({
+      name:"Votes",
+      value:
+`👍 ${data.up.size} ${buildBar(data.up.size,total)}
+🤔 ${data.maybe.size} ${buildBar(data.maybe.size,total)}
+❌ ${data.down.size} ${buildBar(data.down.size,total)}`
     })
+    .setColor(0x5865F2)
+}
+
+/* ------------------------ */
+/*      CREATION VOTE       */
+/* ------------------------ */
+
+async function envoyerPlanning(channel,jourKey,horaire,duration){
+
+  if(sessions.has(channel.id))
+    return channel.send("❌ Une session est déjà active")
+
+  const id=Date.now().toString()
+
+  const voteData={
+    jour:jourKey,
+    horaire,
+    up:new Set(),
+    maybe:new Set(),
+    down:new Set()
   }
 
-  const dureeMs = parseDuree(dureeInput)
+  const embed=createEmbed(jourKey,horaire,voteData)
 
-  await interaction.reply({
-    content: `📅 Planning lancé (clôture dans ${dureeInput || "24h"})`,
-    flags: 64
+  const msg=await channel.send({
+    embeds:[embed],
+    components:[createButtons(id)]
   })
 
-  const sessionId = Date.now().toString()
+  voteData.messageId=msg.id
+  votes.set(id,voteData)
 
-  const endTime = Date.now() + dureeMs
-
-  activeSessions.set(sessionId, {
-    channelId: interaction.channel.id,
-    creneaux: [],
-    timer: null,
-    endTime
-  })
-
-  for (const jour of jours) {
-    for (const horaire of horaires) {
-
-      const id = `${sessionId}_${jour}_${horaire}`
-
-      const voteData = {
-        sessionId,
-        jour,
-        horaire,
-        up: new Set(),
-        maybe: new Set(),
-        down: new Set(),
-        messageId: null
-      }
-
-      const embed = createEmbed(jour, horaire, voteData)
-
-      const message = await interaction.channel.send({
-        embeds: [embed],
-        components: [createButtons(id)]
-      })
-
-      voteData.messageId = message.id
-      votes.set(id, voteData)
-      activeSessions.get(sessionId).creneaux.push(id)
-    }
+  const session={
+    creneaux:[id],
+    endTime:Date.now()+duration
   }
 
-  const timer = setTimeout(() => {
-    finaliserSession(sessionId)
-  }, dureeMs)
-  activeSessions.get(sessionId).timer = timer
+  sessions.set(channel.id,session)
+
+  const timer=setTimeout(()=>{
+    finaliserSession(channel)
+  },duration)
+
+  timers.set(channel.id,timer)
 
   persist()
 }
 
-/* =========================
-   VOTE
-========================= */
+/* ------------------------ */
+/*          VOTE            */
+/* ------------------------ */
 
-async function handleVote(interaction) {
+async function handleVote(interaction){
 
-  const firstUnderscore = interaction.customId.indexOf("_")
-  const type = interaction.customId.substring(0, firstUnderscore)
-  const id = interaction.customId.substring(firstUnderscore + 1)
+  const [_,type,id]=interaction.customId.split("_")
 
-  if (!votes.has(id)) {
-    return interaction.reply({
-      content: "Ce créneau n'est plus actif.",
-      flags: 64
-    })
-  }
+  const voteData=votes.get(id)
+  if(!voteData) return
 
-  const voteData = votes.get(id)
+  const user=interaction.user.id
 
-  voteData.up.delete(interaction.user.id)
-  voteData.maybe.delete(interaction.user.id)
-  voteData.down.delete(interaction.user.id)
+  voteData.up.delete(user)
+  voteData.maybe.delete(user)
+  voteData.down.delete(user)
 
-  voteData[type].add(interaction.user.id)
+  if(type==="up") voteData.up.add(user)
+  if(type==="maybe") voteData.maybe.add(user)
+  if(type==="down") voteData.down.add(user)
 
-  const embed = createEmbed(voteData.jour, voteData.horaire, voteData)
+  const embed=createEmbed(voteData.jour,voteData.horaire,voteData)
 
-  await interaction.update({
-    embeds: [embed],
-    components: [createButtons(id)]
-  })
+  const msg=await interaction.channel.messages.fetch(voteData.messageId)
+
+  await msg.edit({embeds:[embed]})
+
+  await interaction.reply({content:"Vote enregistré",ephemeral:true})
 
   persist()
 }
 
-/* =========================
-   FINALISATION
-========================= */
+/* ------------------------ */
+/*     FINALISATION         */
+/* ------------------------ */
 
-async function finaliserSession(sessionId) {
+async function finaliserSession(channel){
 
-  const session = activeSessions.get(sessionId)
-  if (!session) return
+  const session=sessions.get(channel.id)
+  if(!session) return
 
-  const channel = await global.client.channels.fetch(session.channelId)
+  let participants=new Set()
+  let recap=""
+  let unanimousWinner=null
 
-  let bestScore = -1
-  let winners = []
-  let recap = ""
-  let participants = new Set()
+  for(const id of session.creneaux){
 
-  for (const id of session.creneaux) {
+    const data=votes.get(id)
+    if(!data) continue
 
-    const data = votes.get(id)
-    if (!data) continue
+    const voters=[...data.up,...data.maybe,...data.down]
+    voters.forEach(v=>participants.add(v))
 
-    data.up.forEach(u => participants.add(u))
-    data.maybe.forEach(u => participants.add(u))
-    data.down.forEach(u => participants.add(u))
+    recap+=`📅 ${JOURS[data.jour]} ${data.horaire}
+👍 ${data.up.size} | 🤔 ${data.maybe.size} | ❌ ${data.down.size}\n\n`
 
-    const score = data.up.size * 2 + data.maybe.size
-
-    if (score > bestScore) {
-      bestScore = score
-      winners = [data]
-    } else if (score === bestScore) {
-      winners.push(data)
+    if(
+      data.down.size===0 &&
+      data.maybe.size===0 &&
+      data.up.size>0 &&
+      data.up.size===participants.size
+    ){
+      unanimousWinner=data
     }
-
-    const upUsers = [...data.up].map(id => `<@${id}>`).join(", ") || "-"
-    const maybeUsers = [...data.maybe].map(id => `<@${id}>`).join(", ") || "-"
-    const downUsers = [...data.down].map(id => `<@${id}>`).join(", ") || "-"
-
-    recap += `📅 ${JOURS[data.jour]} ${data.horaire}\n`
-    recap += `👍 (${data.up.size}) ${upUsers}\n`
-    recap += `🤔 (${data.maybe.size}) ${maybeUsers}\n`
-    recap += `❌ (${data.down.size}) ${downUsers}\n\n`
-
-    try {
-      const msg = await channel.messages.fetch(data.messageId)
-      await msg.delete()
-    } catch {}
-
-    votes.delete(id)
   }
 
-  const resultEmbed = new EmbedBuilder()
-    .setTitle("📊 Résumé global du planning")
+  const embed=new EmbedBuilder()
+    .setTitle("📊 Résultat du vote")
     .setDescription(recap)
-    .addFields(
-      {
-        name: "👥 Participants",
-        value: `${participants.size} personne(s)`
-      },
-      {
-        name: "🏆 Créneau recommandé",
-        value: winners.length > 1
-          ? winners.map(w => `${JOURS[w.jour]} ${w.horaire}`).join("\n")
-          : winners[0]
-            ? `${JOURS[winners[0].jour]} ${winners[0].horaire}`
-            : "Aucun vote"
-      }
-    )
+    .addFields({
+      name:"🏆 Résultat",
+      value:unanimousWinner
+        ?`${JOURS[unanimousWinner.jour]} ${unanimousWinner.horaire}`
+        :"❌ Aucun créneau unanime"
+    })
     .setColor(0x2ecc71)
 
-  await channel.send({ embeds: [resultEmbed] })
+  await channel.send({embeds:[embed]})
 
-  clearTimeout(session.timer)
-  activeSessions.delete(sessionId)
+  /* EVENT DISCORD */
 
-  persist()
-}
+  if(unanimousWinner){
 
-/* =========================
-   STOP & CLEAR
-========================= */
+    try{
 
-async function stopSession(channelId) {
-  const entry = [...activeSessions.entries()]
-    .find(([_, v]) => v.channelId === channelId)
+      const startHour=parseInt(unanimousWinner.horaire.split("h")[0])
+      const endHour=parseInt(unanimousWinner.horaire.split("-")[1])
 
-  if (!entry) return false
+      const startDate=new Date()
+      startDate.setHours(startHour,0,0,0)
 
-  const [sessionId] = entry
-  await finaliserSession(sessionId)
-  return true
-}
+      const endDate=new Date()
+      endDate.setHours(endHour,0,0,0)
 
-async function clearSession(channelId) {
+      await channel.guild.scheduledEvents.create({
+        name:`Planning - ${JOURS[unanimousWinner.jour]}`,
+        scheduledStartTime:startDate,
+        scheduledEndTime:endDate,
+        privacyLevel:2,
+        entityType:3,
+        channel
+      })
 
-  const entry = [...activeSessions.entries()]
-    .find(([_, v]) => v.channelId === channelId)
-
-  if (!entry) return false
-
-  const [sessionId, session] = entry
-  const channel = await global.client.channels.fetch(channelId)
-
-  for (const id of session.creneaux) {
-    const data = votes.get(id)
-    if (!data) continue
-
-    try {
-      const msg = await channel.messages.fetch(data.messageId)
-      await msg.delete()
-    } catch {}
-
-    votes.delete(id)
-  }
-
-  clearTimeout(session.timer)
-  activeSessions.delete(sessionId)
-
-  persist()
-  return true
-}
-
-/* =========================
-   PERSISTENCE
-========================= */
-
-function persist() {
-  const data = {
-    activeSessions: [...activeSessions.entries()].map(([id, s]) => [
-      id,
-      {
-        channelId: s.channelId,
-        creneaux: s.creneaux,
-        endTime: s.endTime
-      }
-    ]),
-    votes: [...votes.entries()].map(([id, v]) => [
-      id,
-      {
-        ...v,
-        up: [...v.up],
-        maybe: [...v.maybe],
-        down: [...v.down]
-      }
-    ])
-  }
-
-  save(data)
-}
-
-function restore() {
-
-  const data = load()
-  if (!data) return
-
-  activeSessions = new Map()
-  votes = new Map()
-
-  // Restaurer votes
-  for (const [id, v] of data.votes) {
-    votes.set(id, {
-      ...v,
-      up: new Set(v.up),
-      maybe: new Set(v.maybe),
-      down: new Set(v.down)
-    })
-  }
-
-  // Restaurer sessions + recréer timers
-  for (const [sessionId, s] of data.activeSessions) {
-
-    const remaining = s.endTime - Date.now()
-
-    if (remaining <= 0) {
-      // Session expirée pendant que le bot était off
-      finaliserSession(sessionId)
-      continue
+    }catch(err){
+      console.log("Event impossible:",err.message)
     }
 
-    const timer = setTimeout(() => {
-      finaliserSession(sessionId)
-    }, remaining)
-
-    activeSessions.set(sessionId, {
-      channelId: s.channelId,
-      creneaux: s.creneaux,
-      endTime: s.endTime,
-      timer
-    })
   }
 
-  console.log("Sessions restaurées :", activeSessions.size)
+  sessions.delete(channel.id)
+  timers.delete(channel.id)
+
+  persist()
 }
 
-module.exports = {
-  parser,
+/* ------------------------ */
+/*      RECREATION MSG      */
+/* ------------------------ */
+
+async function recreateIfMissing(message){
+
+  for(const [id,data] of votes.entries()){
+
+    if(data.messageId===message.id){
+
+      const embed=createEmbed(data.jour,data.horaire,data)
+
+      const newMsg=await message.channel.send({
+        embeds:[embed],
+        components:[createButtons(id)]
+      })
+
+      data.messageId=newMsg.id
+
+      persist()
+
+      break
+    }
+  }
+}
+
+/* ------------------------ */
+/*        COMMANDES         */
+/* ------------------------ */
+
+function stopSession(channel){
+
+  const timer=timers.get(channel.id)
+  if(timer) clearTimeout(timer)
+
+  finaliserSession(channel)
+}
+
+function clearSession(channel){
+
+  sessions.delete(channel.id)
+
+  const timer=timers.get(channel.id)
+  if(timer) clearTimeout(timer)
+
+  timers.delete(channel.id)
+
+  persist()
+}
+
+module.exports={
   envoyerPlanning,
   handleVote,
   stopSession,
   clearSession,
-  restore
+  restore,
+  recreateIfMissing
 }

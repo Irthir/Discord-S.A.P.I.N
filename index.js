@@ -11,18 +11,19 @@ const {
   envoyerPlanning,
   handleVote,
   stopSession,
-  clearSession
+  clearSession,
+  restore,
+  recreateIfMissing
 } = require('./planning')
 
 const client = new Client({
   intents: [
   GatewayIntentBits.Guilds,
+  GatewayIntentBits.GuildMessages,
   GatewayIntentBits.GuildMessageReactions
   ],
   partials: [Partials.Message, Partials.Channel, Partials.Reaction]
 })
-
-const { restore } = require('./planning')
 
 client.once('clientReady', () => {
   console.log(`Connecté en tant que ${client.user.tag}`)
@@ -77,6 +78,14 @@ client.on('interactionCreate', async interaction => {
   } catch (err) {
     console.error(err)
   }
+})
+
+client.on("messageDelete", async message => {
+
+  if (!message.guild) return
+  if (!message.id) return
+
+  await recreateIfMissing(message)
 })
 
 client.login(process.env.token)
