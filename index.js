@@ -144,7 +144,7 @@ process.on("uncaughtException", console.error)
    LOGIN
 ========================= */
 
-client.login(process.env.TOKEN)
+client.login(process.env.token)
 
 /* =========================
    GLOBAL CLIENT
