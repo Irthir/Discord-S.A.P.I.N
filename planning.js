@@ -11,7 +11,7 @@ const path = require("path")
 const DATA_FILE = path.join(__dirname, "planning_data.json")
 
 /* =========================
-   CONSTANTES
+   CONFIG
 ========================= */
 
 const JOURS = {
@@ -29,28 +29,6 @@ const HORAIRES_DEFAUT = ["20h-22h"]
 let votes = new Map()
 let sessions = new Map()
 let timers = new Map()
-
-/* =========================
-   CLEANUP CENTRAL 🔥
-========================= */
-
-function cleanupSession(channelId) {
-
-  const session = sessions.get(channelId)
-  if (!session) return
-
-  for (const id of session.creneaux) {
-    votes.delete(id)
-  }
-
-  const timer = timers.get(channelId)
-  if (timer) clearTimeout(timer)
-
-  timers.delete(channelId)
-  sessions.delete(channelId)
-
-  persist()
-}
 
 /* =========================
    PARSER
@@ -74,8 +52,11 @@ function parser(input) {
 
     if (JOURS[arg]) {
       jours.push(arg)
-    } else if (/^\d{1,2}h?-\d{1,2}h?$/.test(arg)) {
-      horaires.push(arg.replace(/h/g, "") + "h")
+    }
+
+    const match = arg.match(/^(\d{1,2})h?-(\d{1,2})h?$/)
+    if (match) {
+      horaires.push(`${match[1]}h-${match[2]}h`)
     }
   }
 
@@ -137,18 +118,40 @@ function restore(client) {
     }
 
     const timer = setTimeout(() => {
-      const channel = client.channels.cache.get(channelId)
+      const channel = global.client.channels.cache.get(channelId)
       if (channel) finaliserSession(channel)
     }, remaining)
 
     timers.set(channelId, timer)
   }
 
-  console.log("✔ Planning restauré")
+  console.log("✔ Sessions restaurées")
 }
 
 /* =========================
-   UTILS
+   CLEANUP
+========================= */
+
+function cleanupSession(channelId) {
+
+  const session = sessions.get(channelId)
+  if (!session) return
+
+  for (const id of session.creneaux) {
+    votes.delete(id)
+  }
+
+  const timer = timers.get(channelId)
+  if (timer) clearTimeout(timer)
+
+  timers.delete(channelId)
+  sessions.delete(channelId)
+
+  persist()
+}
+
+/* =========================
+   UI
 ========================= */
 
 function buildBar(value, total) {
@@ -183,54 +186,59 @@ function createEmbed(jourKey, horaire, data) {
 }
 
 /* =========================
-   CREATION
+   CREATION MULTI CRENEAUX
 ========================= */
 
 async function envoyerPlanning(interaction, jours, horaires, duree) {
 
   const channel = interaction.channel
 
-  // 🔒 sécurité anti session fantôme
   if (sessions.has(channel.id)) {
-
-    const session = sessions.get(channel.id)
-
-    if (session.endTime < Date.now()) {
-      cleanupSession(channel.id)
-    } else {
-      return interaction.editReply({
-        content: "❌ Un planning est déjà actif."
-      })
-    }
+    return interaction.editReply({
+      content: "❌ Un planning est déjà actif."
+    })
   }
 
   const duration = 24 * 60 * 60 * 1000
-  const id = Date.now().toString()
 
-  const voteData = {
-    jour: jours[0],
-    horaire: horaires[0],
-    up: new Set(),
-    maybe: new Set(),
-    down: new Set()
+  const session = {
+    creneaux: [],
+    endTime: Date.now() + duration
   }
 
-  const embed = createEmbed(voteData.jour, voteData.horaire, voteData)
+  sessions.set(channel.id, session)
 
-  const msg = await channel.send({
-    embeds: [embed],
-    components: [createButtons(id)]
-  })
+  for (const jour of jours) {
+    for (const horaire of horaires) {
 
-  voteData.messageId = msg.id
-  votes.set(id, voteData)
+      const id = `${Date.now()}_${jour}_${horaire}`
 
-  sessions.set(channel.id, {
-    creneaux: [id],
-    endTime: Date.now() + duration
-  })
+      const voteData = {
+        jour,
+        horaire,
+        up: new Set(),
+        maybe: new Set(),
+        down: new Set()
+      }
 
-  const timer = setTimeout(() => finaliserSession(channel), duration)
+      const embed = createEmbed(jour, horaire, voteData)
+
+      const msg = await channel.send({
+        embeds: [embed],
+        components: [createButtons(id)]
+      })
+
+      voteData.messageId = msg.id
+
+      votes.set(id, voteData)
+      session.creneaux.push(id)
+    }
+  }
+
+  const timer = setTimeout(() => {
+    finaliserSession(channel)
+  }, duration)
+
   timers.set(channel.id, timer)
 
   persist()
@@ -292,7 +300,7 @@ async function finaliserSession(channel) {
     ]
   })
 
-  cleanupSession(channel.id) // 🔥 CENTRAL
+  cleanupSession(channel.id)
 }
 
 /* =========================
@@ -315,11 +323,7 @@ function clearSession(channel) {
   return true
 }
 
-/* =========================
-   RECREATE
-========================= */
-
-async function recreateIfMissing() {}
+/* ========================= */
 
 module.exports = {
   parser,
@@ -327,6 +331,5 @@ module.exports = {
   handleVote,
   stopSession,
   clearSession,
-  restore,
-  recreateIfMissing
+  restore
 }
