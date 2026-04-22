@@ -248,28 +248,48 @@ async function envoyerPlanning(interaction, jours, horaires, duree) {
    VOTE
 ========================= */
 
+const { MessageFlags } = require("discord.js")
+
 async function handleVote(interaction) {
 
-  const [_, type, id] = interaction.customId.split("_")
-  const voteData = votes.get(id)
-  if (!voteData) return
+  if (!interaction.isButton()) return
 
-  const user = interaction.user.id
+  try {
 
-  voteData.up.delete(user)
-  voteData.maybe.delete(user)
-  voteData.down.delete(user)
+    // ⚡ Répond immédiatement (évite timeout)
+    await interaction.deferUpdate()
 
-  voteData[type].add(user)
+    const [_, type, id] = interaction.customId.split("_")
 
-  const embed = createEmbed(voteData.jour, voteData.horaire, voteData)
+    const voteData = votes.get(id)
+    if (!voteData) return
 
-  const msg = await interaction.channel.messages.fetch(voteData.messageId)
-  await msg.edit({ embeds: [embed] })
+    const user = interaction.user.id
 
-  await interaction.reply({ content: "Vote enregistré", ephemeral: true })
+    voteData.up.delete(user)
+    voteData.maybe.delete(user)
+    voteData.down.delete(user)
 
-  persist()
+    voteData[type].add(user)
+
+    const embed = createEmbed(
+      voteData.jour,
+      voteData.horaire,
+      voteData
+    )
+
+    const msg = await interaction.channel.messages.fetch(voteData.messageId)
+
+    await msg.edit({
+      embeds: [embed],
+      components: [createButtons(id)]
+    })
+
+    persist()
+
+  } catch (err) {
+    console.error("Erreur vote:", err)
+  }
 }
 
 /* =========================
