@@ -71,7 +71,7 @@ client.on('interactionCreate', async interaction => {
       /* ===== STOP ===== */
       else if (interaction.commandName === 'stopplanning') {
 
-        const success = await stopSession(interaction.channel.id)
+        const success = await stopSession(interaction.channel)
 
         await interaction.reply({
           content: success
@@ -84,7 +84,7 @@ client.on('interactionCreate', async interaction => {
       /* ===== CLEAR ===== */
       else if (interaction.commandName === 'clearplanning') {
 
-        const success = await clearSession(interaction.channel.id)
+        const success = await clearSession(interaction.channel)
 
         await interaction.reply({
           content: success

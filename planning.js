@@ -31,7 +31,29 @@ let sessions = new Map()
 let timers = new Map()
 
 /* =========================
-   PARSER (AJOUTÉ)
+   CLEANUP CENTRAL 🔥
+========================= */
+
+function cleanupSession(channelId) {
+
+  const session = sessions.get(channelId)
+  if (!session) return
+
+  for (const id of session.creneaux) {
+    votes.delete(id)
+  }
+
+  const timer = timers.get(channelId)
+  if (timer) clearTimeout(timer)
+
+  timers.delete(channelId)
+  sessions.delete(channelId)
+
+  persist()
+}
+
+/* =========================
+   PARSER
 ========================= */
 
 function parser(input) {
@@ -64,7 +86,7 @@ function parser(input) {
 }
 
 /* =========================
-   SAUVEGARDE
+   SAVE / RESTORE
 ========================= */
 
 function persist() {
@@ -108,7 +130,11 @@ function restore(client) {
   for (const [channelId, session] of sessions.entries()) {
 
     const remaining = session.endTime - Date.now()
-    if (remaining <= 0) continue
+
+    if (remaining <= 0) {
+      cleanupSession(channelId)
+      continue
+    }
 
     const timer = setTimeout(() => {
       const channel = client.channels.cache.get(channelId)
@@ -164,8 +190,18 @@ async function envoyerPlanning(interaction, jours, horaires, duree) {
 
   const channel = interaction.channel
 
+  // 🔒 sécurité anti session fantôme
   if (sessions.has(channel.id)) {
-    return interaction.editReply({ content: "❌ Déjà un planning actif" })
+
+    const session = sessions.get(channel.id)
+
+    if (session.endTime < Date.now()) {
+      cleanupSession(channel.id)
+    } else {
+      return interaction.editReply({
+        content: "❌ Un planning est déjà actif."
+      })
+    }
   }
 
   const duration = 24 * 60 * 60 * 1000
@@ -229,7 +265,7 @@ async function handleVote(interaction) {
 }
 
 /* =========================
-   FINAL
+   FINALISATION
 ========================= */
 
 async function finaliserSession(channel) {
@@ -256,32 +292,37 @@ async function finaliserSession(channel) {
     ]
   })
 
-  sessions.delete(channel.id)
-  timers.delete(channel.id)
-
-  persist()
+  cleanupSession(channel.id) // 🔥 CENTRAL
 }
 
 /* =========================
-   AUTRES
+   COMMANDES
 ========================= */
 
-function stopSession(channel) {
-  const timer = timers.get(channel.id)
-  if (timer) clearTimeout(timer)
-  finaliserSession(channel)
+async function stopSession(channel) {
+
+  if (!sessions.has(channel.id)) return false
+
+  await finaliserSession(channel)
+  return true
 }
 
 function clearSession(channel) {
-  sessions.delete(channel.id)
-  timers.delete(channel.id)
-  persist()
+
+  if (!sessions.has(channel.id)) return false
+
+  cleanupSession(channel.id)
+  return true
 }
+
+/* =========================
+   RECREATE
+========================= */
 
 async function recreateIfMissing() {}
 
 module.exports = {
-  parser, // ✅ IMPORTANT
+  parser,
   envoyerPlanning,
   handleVote,
   stopSession,
