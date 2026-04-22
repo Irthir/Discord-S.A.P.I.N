@@ -282,23 +282,106 @@ async function finaliserSession(channel) {
   if (!session) return
 
   let recap = ""
+  let participants = new Set()
+  let unanimousWinner = null
 
+  // 1. Collecter données
   for (const id of session.creneaux) {
 
     const data = votes.get(id)
     if (!data) continue
 
+    const voters = [
+      ...data.up,
+      ...data.maybe,
+      ...data.down
+    ]
+
+    voters.forEach(v => participants.add(v))
+
     recap += `📅 ${JOURS[data.jour]} ${data.horaire}
 👍 ${data.up.size} | 🤔 ${data.maybe.size} | ❌ ${data.down.size}\n\n`
   }
 
-  await channel.send({
-    embeds: [
-      new EmbedBuilder()
-        .setTitle("📊 Résultat")
-        .setDescription(recap)
-    ]
-  })
+  // 2. Détecter unanimité
+  for (const id of session.creneaux) {
+
+    const data = votes.get(id)
+    if (!data) continue
+
+    if (
+      data.down.size === 0 &&
+      data.maybe.size === 0 &&
+      data.up.size > 0 &&
+      data.up.size === participants.size
+    ) {
+      unanimousWinner = data
+      break
+    }
+  }
+
+  // 3. Résumé
+  const resultEmbed = new EmbedBuilder()
+    .setTitle("📊 Résultat")
+    .setDescription(recap)
+    .addFields({
+      name: "🏆 Résultat",
+      value: unanimousWinner
+        ? `Unanimité : ${JOURS[unanimousWinner.jour]} ${unanimousWinner.horaire}`
+        : "❌ Aucun créneau unanime"
+    })
+
+  await channel.send({ embeds: [resultEmbed] })
+
+  // 4. Création événement Discord
+  if (unanimousWinner) {
+
+    try {
+
+      const [startRaw, endRaw] = unanimousWinner.horaire.split("-")
+
+      const startHour = parseInt(startRaw.replace("h", ""))
+      const endHour = parseInt(endRaw.replace("h", ""))
+
+      // 🔥 Calcul vraie date (jour choisi)
+      const today = new Date()
+
+      const joursIndex = {
+        dim: 0,
+        lun: 1,
+        mar: 2,
+        mer: 3,
+        jeu: 4,
+        ven: 5,
+        sam: 6
+      }
+
+      const target = joursIndex[unanimousWinner.jour]
+      const diff = (target + 7 - today.getDay()) % 7
+
+      const startDate = new Date(today)
+      startDate.setDate(today.getDate() + diff)
+      startDate.setHours(startHour, 0, 0, 0)
+
+      const endDate = new Date(startDate)
+      endDate.setHours(endHour, 0, 0, 0)
+
+      await channel.guild.scheduledEvents.create({
+        name: `📅 Planning - ${JOURS[unanimousWinner.jour]}`,
+        scheduledStartTime: startDate,
+        scheduledEndTime: endDate,
+        privacyLevel: 2,
+        entityType: 3,
+        channel: channel
+      })
+
+      await channel.send("📅 Événement Discord créé automatiquement !")
+
+    } catch (err) {
+      console.log("Erreur création event:", err.message)
+      await channel.send("⚠️ Impossible de créer l'événement (permissions ?)")
+    }
+  }
 
   cleanupSession(channel.id)
 }
