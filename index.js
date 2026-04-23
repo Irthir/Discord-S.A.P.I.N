@@ -12,15 +12,13 @@ const {
   handleVote,
   stopSession,
   clearSession,
-  restore,
-  recreateIfMissing
+  restore
 } = require('./planning')
 
 const client = new Client({
   intents: [
     GatewayIntentBits.Guilds,
-    GatewayIntentBits.GuildMessages,
-    GatewayIntentBits.GuildMessageReactions
+    GatewayIntentBits.GuildMessages
   ],
   partials: [
     Partials.Message,
@@ -29,28 +27,18 @@ const client = new Client({
   ]
 })
 
-/* =========================
-   READY
-========================= */
-
 client.once('clientReady', () => {
   console.log(`Connecté en tant que ${client.user.tag}`)
   restore()
 })
 
-/* =========================
-   INTERACTIONS
-========================= */
-
 client.on('interactionCreate', async interaction => {
 
   try {
 
-    /* ---------- COMMANDES ---------- */
-
+    /* ===== COMMANDES ===== */
     if (interaction.isChatInputCommand()) {
 
-      /* ===== PLANNING ===== */
       if (interaction.commandName === 'planning') {
 
         await interaction.deferReply({ flags: 64 })
@@ -62,13 +50,11 @@ client.on('interactionCreate', async interaction => {
 
         await envoyerPlanning(interaction, jours, horaires, duree)
 
-        // IMPORTANT : confirmer la fin
         await interaction.editReply({
-          content: "✅ Planning créé avec succès"
+          content: "✅ Planning créé"
         })
       }
 
-      /* ===== STOP ===== */
       else if (interaction.commandName === 'stopplanning') {
 
         const success = await stopSession(interaction.channel)
@@ -81,7 +67,6 @@ client.on('interactionCreate', async interaction => {
         })
       }
 
-      /* ===== CLEAR ===== */
       else if (interaction.commandName === 'clearplanning') {
 
         const success = await clearSession(interaction.channel)
@@ -95,59 +80,34 @@ client.on('interactionCreate', async interaction => {
       }
     }
 
-    /* ---------- BOUTONS ---------- */
-
-    if (interaction.isButton()) {
+    /* ===== BOUTONS ===== */
+    else if (interaction.isButton()) {
       await handleVote(interaction)
     }
 
   } catch (err) {
 
-    console.error("❌ Erreur interaction :", err)
+    console.error("❌ Interaction error:", err)
 
-    // éviter "application ne répond plus"
-    if (interaction.deferred || interaction.replied) {
-      await interaction.followUp({
-        content: "❌ Une erreur est survenue.",
-        flags: 64
-      }).catch(() => {})
-    } else {
-      await interaction.reply({
-        content: "❌ Une erreur est survenue.",
-        flags: 64
-      }).catch(() => {})
-    }
+    try {
+      if (interaction.deferred || interaction.replied) {
+        await interaction.followUp({
+          content: "❌ Erreur.",
+          flags: 64
+        })
+      } else {
+        await interaction.reply({
+          content: "❌ Erreur.",
+          flags: 64
+        })
+      }
+    } catch {}
   }
 })
-
-/* =========================
-   MESSAGE DELETE
-========================= */
-
-client.on("messageDelete", async message => {
-  try {
-    if (!message.guild || !message.id) return
-    await recreateIfMissing(message)
-  } catch (err) {
-    console.error("Erreur recreate message :", err)
-  }
-})
-
-/* =========================
-   ANTI CRASH
-========================= */
 
 process.on("unhandledRejection", console.error)
 process.on("uncaughtException", console.error)
 
-/* =========================
-   LOGIN
-========================= */
-
 client.login(process.env.token)
-
-/* =========================
-   GLOBAL CLIENT
-========================= */
 
 global.client = client
