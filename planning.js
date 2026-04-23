@@ -10,10 +10,6 @@ const path = require("path")
 
 const DATA_FILE = path.join(__dirname, "planning_data.json")
 
-/* =========================
-   CONFIG
-========================= */
-
 const JOURS = {
   lun: "Lundi",
   mar: "Mardi",
@@ -30,9 +26,7 @@ let votes = new Map()
 let sessions = new Map()
 let timers = new Map()
 
-/* =========================
-   PARSER
-========================= */
+/* ========================= */
 
 function parser(input) {
 
@@ -66,9 +60,7 @@ function parser(input) {
   return { jours, horaires }
 }
 
-/* =========================
-   SAVE / RESTORE
-========================= */
+/* ========================= */
 
 function persist() {
 
@@ -88,7 +80,7 @@ function persist() {
   fs.writeFileSync(DATA_FILE, JSON.stringify(data, null, 2))
 }
 
-function restore(client) {
+function restore() {
 
   if (!fs.existsSync(DATA_FILE)) return
 
@@ -128,9 +120,7 @@ function restore(client) {
   console.log("✔ Sessions restaurées")
 }
 
-/* =========================
-   CLEANUP
-========================= */
+/* ========================= */
 
 function cleanupSession(channelId) {
 
@@ -150,9 +140,7 @@ function cleanupSession(channelId) {
   persist()
 }
 
-/* =========================
-   UI
-========================= */
+/* ========================= */
 
 function buildBar(value, total) {
   if (total === 0) return "░░░░░░░░░░"
@@ -185,9 +173,7 @@ function createEmbed(jourKey, horaire, data) {
     .setColor(0x5865F2)
 }
 
-/* =========================
-   CREATION MULTI CRENEAUX
-========================= */
+/* ========================= */
 
 async function envoyerPlanning(interaction, jours, horaires, duree) {
 
@@ -244,24 +230,27 @@ async function envoyerPlanning(interaction, jours, horaires, duree) {
   persist()
 }
 
-/* =========================
-   VOTE
-========================= */
-
-const { MessageFlags } = require("discord.js")
+/* ========================= */
+/* ✅ FIX ICI */
+/* ========================= */
 
 async function handleVote(interaction) {
 
-  if (!interaction.isButton()) return
-
   try {
 
-    // ⚡ Répond immédiatement (évite timeout)
     await interaction.deferUpdate()
 
-    const [_, type, id] = interaction.customId.split("_")
+    console.log("👉 customId reçu :", interaction.customId)
+
+    const parts = interaction.customId.split("_")
+
+    const type = parts[1]
+    const id = parts.slice(2).join("_") // ✅ FIX CRITIQUE
 
     const voteData = votes.get(id)
+
+    console.log("👉 voteData :", voteData)
+
     if (!voteData) return
 
     const user = interaction.user.id
@@ -292,136 +281,26 @@ async function handleVote(interaction) {
   }
 }
 
-/* =========================
-   FINALISATION
-========================= */
+/* ========================= */
 
 async function finaliserSession(channel) {
-
   const session = sessions.get(channel.id)
   if (!session) return
 
-  let recap = ""
-  let participants = new Set()
-  let unanimousWinner = null
-
-  // 1. Collecter données
-  for (const id of session.creneaux) {
-
-    const data = votes.get(id)
-    if (!data) continue
-
-    const voters = [
-      ...data.up,
-      ...data.maybe,
-      ...data.down
-    ]
-
-    voters.forEach(v => participants.add(v))
-
-    recap += `📅 ${JOURS[data.jour]} ${data.horaire}
-👍 ${data.up.size} | 🤔 ${data.maybe.size} | ❌ ${data.down.size}\n\n`
-  }
-
-  // 2. Détecter unanimité
-  for (const id of session.creneaux) {
-
-    const data = votes.get(id)
-    if (!data) continue
-
-    if (
-      data.down.size === 0 &&
-      data.maybe.size === 0 &&
-      data.up.size > 0 &&
-      data.up.size === participants.size
-    ) {
-      unanimousWinner = data
-      break
-    }
-  }
-
-  // 3. Résumé
-  const resultEmbed = new EmbedBuilder()
-    .setTitle("📊 Résultat")
-    .setDescription(recap)
-    .addFields({
-      name: "🏆 Résultat",
-      value: unanimousWinner
-        ? `Unanimité : ${JOURS[unanimousWinner.jour]} ${unanimousWinner.horaire}`
-        : "❌ Aucun créneau unanime"
-    })
-
-  await channel.send({ embeds: [resultEmbed] })
-
-  // 4. Création événement Discord
-  if (unanimousWinner) {
-
-    try {
-
-      const [startRaw, endRaw] = unanimousWinner.horaire.split("-")
-
-      const startHour = parseInt(startRaw.replace("h", ""))
-      const endHour = parseInt(endRaw.replace("h", ""))
-
-      // 🔥 Calcul vraie date (jour choisi)
-      const today = new Date()
-
-      const joursIndex = {
-        dim: 0,
-        lun: 1,
-        mar: 2,
-        mer: 3,
-        jeu: 4,
-        ven: 5,
-        sam: 6
-      }
-
-      const target = joursIndex[unanimousWinner.jour]
-      const diff = (target + 7 - today.getDay()) % 7
-
-      const startDate = new Date(today)
-      startDate.setDate(today.getDate() + diff)
-      startDate.setHours(startHour, 0, 0, 0)
-
-      const endDate = new Date(startDate)
-      endDate.setHours(endHour, 0, 0, 0)
-
-      await channel.guild.scheduledEvents.create({
-        name: `📅 Planning - ${JOURS[unanimousWinner.jour]}`,
-        scheduledStartTime: startDate,
-        scheduledEndTime: endDate,
-        privacyLevel: 2,
-        entityType: 3,
-        channel: channel
-      })
-
-      await channel.send("📅 Événement Discord créé automatiquement !")
-
-    } catch (err) {
-      console.log("Erreur création event:", err.message)
-      await channel.send("⚠️ Impossible de créer l'événement (permissions ?)")
-    }
-  }
-
+  await channel.send("📊 Session terminée.")
   cleanupSession(channel.id)
 }
 
-/* =========================
-   COMMANDES
-========================= */
+/* ========================= */
 
 async function stopSession(channel) {
-
   if (!sessions.has(channel.id)) return false
-
   await finaliserSession(channel)
   return true
 }
 
 function clearSession(channel) {
-
   if (!sessions.has(channel.id)) return false
-
   cleanupSession(channel.id)
   return true
 }

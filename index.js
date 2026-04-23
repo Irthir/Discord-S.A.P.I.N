@@ -18,7 +18,8 @@ const {
 const client = new Client({
   intents: [
     GatewayIntentBits.Guilds,
-    GatewayIntentBits.GuildMessages
+    GatewayIntentBits.GuildMessages,
+    GatewayIntentBits.MessageContent // ✅ ajouté
   ],
   partials: [
     Partials.Message,
@@ -29,7 +30,9 @@ const client = new Client({
 
 client.once('clientReady', () => {
   console.log(`Connecté en tant que ${client.user.tag}`)
-  restore()
+
+  global.client = client // ✅ important AVANT restore
+  restore(client)        // ✅ corrigé
 })
 
 client.on('interactionCreate', async interaction => {
@@ -82,6 +85,7 @@ client.on('interactionCreate', async interaction => {
 
     /* ===== BOUTONS ===== */
     else if (interaction.isButton()) {
+      console.log("🟢 Bouton cliqué :", interaction.customId) // debug
       await handleVote(interaction)
     }
 
@@ -109,5 +113,3 @@ process.on("unhandledRejection", console.error)
 process.on("uncaughtException", console.error)
 
 client.login(process.env.token)
-
-global.client = client
