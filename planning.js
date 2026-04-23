@@ -26,6 +26,10 @@ let votes = new Map()
 let sessions = new Map()
 let timers = new Map()
 
+entityMetadata: {
+  location: "Discord"
+}
+
 /* ========================= */
 
 function parser(input) {
@@ -377,7 +381,9 @@ async function finaliserSession(channel) {
         scheduledEndTime: endDate,
         privacyLevel: 2,
         entityType: 3,
-        channel: channel
+        entityMetadata: {
+          location: "Serveur Discord"
+        }
       })
 
       await channel.send("📅 Événement créé !")
