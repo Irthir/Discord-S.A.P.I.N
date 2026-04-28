@@ -3,28 +3,44 @@ require('dotenv').config()
 
 const commands = [
   new SlashCommandBuilder()
-  .setName('planning')
-  .setDescription('Générer un planning')
-  .addStringOption(option =>
-    option
-      .setName('options')
-      .setDescription('semaine / weekend / lun mar 10-12 etc.')
-      .setRequired(false)
-  )
-  .addStringOption(option =>
-    option
-      .setName('duree')
-      .setDescription('Durée avant clôture (ex: 30m, 2h, 1j)')
-      .setRequired(false)
-  ).toJSON(),
+    .setName('planning')
+    .setDescription('Générer un planning')
+
+    .addStringOption(option =>
+      option
+        .setName('options')
+        .setDescription('semaine / weekend / lun mar 10-12 etc.')
+        .setRequired(false)
+    )
+
+    .addStringOption(option =>
+      option
+        .setName('duree')
+        .setDescription('Durée avant clôture (ex: 30m, 2h, 1j)')
+        .setRequired(false)
+    )
+
+    // ✅ AJOUT ICI
+    .addStringOption(option =>
+      option
+        .setName('semaine')
+        .setDescription('Choisir la semaine')
+        .setRequired(false)
+        .addChoices(
+          { name: 'Semaine actuelle', value: 'actuelle' },
+          { name: 'Semaine prochaine', value: 'prochaine' }
+        )
+    )
+
+    .toJSON(),
 
   new SlashCommandBuilder()
-  .setName('stopplanning')
-  .setDescription('Clôturer immédiatement le planning actif'),
+    .setName('stopplanning')
+    .setDescription('Clôturer immédiatement le planning actif'),
 
   new SlashCommandBuilder()
-  .setName('clearplanning')
-  .setDescription('Supprimer le planning actif sans afficher les résultats')
+    .setName('clearplanning')
+    .setDescription('Supprimer le planning actif sans afficher les résultats')
 ]
 
 const rest = new REST({ version: '10' }).setToken(process.env.token)
