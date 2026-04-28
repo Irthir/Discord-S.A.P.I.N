@@ -46,14 +46,10 @@ function parser(input) {
 
   for (let arg of args) {
 
-    if (JOURS[arg]) {
-      jours.push(arg)
-    }
+    if (JOURS[arg]) jours.push(arg)
 
     const match = arg.match(/^(\d{1,2})h?-(\d{1,2})h?$/)
-    if (match) {
-      horaires.push(`${match[1]}h-${match[2]}h`)
-    }
+    if (match) horaires.push(`${match[1]}h-${match[2]}h`)
   }
 
   if (jours.length === 0) jours = ["ven"]
@@ -65,7 +61,6 @@ function parser(input) {
 /* ========================= */
 
 function persist() {
-
   const data = {
     votes: [...votes.entries()].map(([id, v]) => [
       id,
@@ -177,7 +172,7 @@ function createEmbed(jourKey, horaire, data) {
 
 /* ========================= */
 
-async function envoyerPlanning(interaction, jours, horaires, duree) {
+async function envoyerPlanning(interaction, jours, horaires, duree, semaine) {
 
   const channel = interaction.channel
 
@@ -187,13 +182,12 @@ async function envoyerPlanning(interaction, jours, horaires, duree) {
     })
   }
 
-  const duration = parseDuree(duree) // ✅ FIX
-
-  console.log("⏱ Durée :", duree, "=>", duration)
+  const duration = parseDuree(duree)
 
   const session = {
     creneaux: [],
-    endTime: Date.now() + duration
+    endTime: Date.now() + duration,
+    semaine // ✅ stocké
   }
 
   sessions.set(channel.id, session)
@@ -290,6 +284,8 @@ async function finaliserSession(channel) {
   const session = sessions.get(channel.id)
   if (!session) return
 
+  const semaine = session.semaine || "actuelle"
+
   let recap = ""
   let participants = new Set()
   let unanimousWinner = null
@@ -322,61 +318,46 @@ async function finaliserSession(channel) {
     }
   }
 
-  const resultEmbed = new EmbedBuilder()
-    .setTitle("📊 Résultat")
-    .setDescription(recap)
-    .addFields({
-      name: "🏆 Résultat",
-      value: unanimousWinner
-        ? `Unanimité : ${JOURS[unanimousWinner.jour]} ${unanimousWinner.horaire}`
-        : "❌ Aucun créneau unanime"
-    })
-
-  await channel.send({ embeds: [resultEmbed] })
+  await channel.send({
+    embeds: [
+      new EmbedBuilder()
+        .setTitle("📊 Résultat")
+        .setDescription(recap)
+    ]
+  })
 
   if (unanimousWinner) {
 
-    try {
+    const today = new Date()
 
-      const [startRaw, endRaw] = unanimousWinner.horaire.split("-")
-
-      const startHour = parseInt(startRaw)
-      const endHour = parseInt(endRaw)
-
-      const today = new Date()
-
-      const joursIndex = {
-        dim: 0, lun: 1, mar: 2, mer: 3,
-        jeu: 4, ven: 5, sam: 6
-      }
-
-      const target = joursIndex[unanimousWinner.jour]
-      const diff = (target + 7 - today.getDay()) % 7
-
-      const startDate = new Date(today)
-      startDate.setDate(today.getDate() + diff)
-      startDate.setHours(startHour, 0, 0, 0)
-
-      const endDate = new Date(startDate)
-      endDate.setHours(endHour, 0, 0, 0)
-
-      await channel.guild.scheduledEvents.create({
-        name: `📅 Planning - ${JOURS[unanimousWinner.jour]}`,
-        scheduledStartTime: startDate,
-        scheduledEndTime: endDate,
-        privacyLevel: 2,
-        entityType: 3,
-        entityMetadata: {
-          location: "Serveur Discord"
-        }
-      })
-
-      await channel.send("📅 Événement créé !")
-
-    } catch (err) {
-      console.log("Erreur event:", err)
-      await channel.send("⚠️ Impossible de créer l'événement")
+    const joursIndex = {
+      dim: 0, lun: 1, mar: 2, mer: 3,
+      jeu: 4, ven: 5, sam: 6
     }
+
+    let diff = (joursIndex[unanimousWinner.jour] + 7 - today.getDay()) % 7
+
+    if (semaine === "prochaine") diff += 7 // ✅ FIX
+
+    const [startRaw, endRaw] = unanimousWinner.horaire.split("-")
+
+    const startDate = new Date(today)
+    startDate.setDate(today.getDate() + diff)
+    startDate.setHours(parseInt(startRaw), 0, 0, 0)
+
+    const endDate = new Date(startDate)
+    endDate.setHours(parseInt(endRaw), 0, 0, 0)
+
+    await channel.guild.scheduledEvents.create({
+      name: `📅 Planning - ${JOURS[unanimousWinner.jour]}`,
+      scheduledStartTime: startDate,
+      scheduledEndTime: endDate,
+      privacyLevel: 2,
+      entityType: 3,
+      entityMetadata: { location: "Serveur Discord" }
+    })
+
+    await channel.send("📅 Événement créé !")
   }
 
   cleanupSession(channel.id)

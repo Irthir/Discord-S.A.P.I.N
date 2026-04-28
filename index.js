@@ -30,15 +30,14 @@ const client = new Client({
 client.once('clientReady', () => {
   console.log(`Connecté en tant que ${client.user.tag}`)
 
-  global.client = client // ✅ important AVANT restore
-  restore(client)        // ✅ corrigé
+  global.client = client
+  restore()
 })
 
 client.on('interactionCreate', async interaction => {
 
   try {
 
-    /* ===== COMMANDES ===== */
     if (interaction.isChatInputCommand()) {
 
       if (interaction.commandName === 'planning') {
@@ -47,13 +46,20 @@ client.on('interactionCreate', async interaction => {
 
         const input = interaction.options.getString('options') || ""
         const duree = interaction.options.getString('duree') || null
+        const semaine = interaction.options.getString('semaine') || "actuelle" // ✅ NEW
 
         const { jours, horaires } = parser(input)
 
-        await envoyerPlanning(interaction, jours, horaires, duree)
+        await envoyerPlanning(
+          interaction,
+          jours,
+          horaires,
+          duree,
+          semaine // ✅ NEW
+        )
 
         await interaction.editReply({
-          content: "✅ Planning créé"
+          content: `✅ Planning créé (${semaine})`
         })
       }
 
@@ -82,9 +88,8 @@ client.on('interactionCreate', async interaction => {
       }
     }
 
-    /* ===== BOUTONS ===== */
     else if (interaction.isButton()) {
-      console.log("🟢 Bouton cliqué :", interaction.customId) // debug
+      console.log("🟢 Bouton cliqué :", interaction.customId)
       await handleVote(interaction)
     }
 
