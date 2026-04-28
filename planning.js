@@ -5,6 +5,8 @@ const {
   EmbedBuilder
 } = require("discord.js")
 
+const { parseDuree } = require("./utils")
+
 const fs = require("fs")
 const path = require("path")
 
@@ -25,10 +27,6 @@ const HORAIRES_DEFAUT = ["20h-22h"]
 let votes = new Map()
 let sessions = new Map()
 let timers = new Map()
-
-entityMetadata: {
-  location: "Discord"
-}
 
 /* ========================= */
 
@@ -189,7 +187,9 @@ async function envoyerPlanning(interaction, jours, horaires, duree) {
     })
   }
 
-  const duration = 24 * 60 * 60 * 1000
+  const duration = parseDuree(duree) // ✅ FIX
+
+  console.log("⏱ Durée :", duree, "=>", duration)
 
   const session = {
     creneaux: [],
@@ -235,8 +235,6 @@ async function envoyerPlanning(interaction, jours, horaires, duree) {
 }
 
 /* ========================= */
-/* ✅ FIX ICI */
-/* ========================= */
 
 async function handleVote(interaction) {
 
@@ -244,20 +242,13 @@ async function handleVote(interaction) {
 
     await interaction.deferUpdate()
 
-    console.log("👉 customId reçu :", interaction.customId)
-
     const parts = interaction.customId.split("_")
-
     const type = parts[1]
-    const id = parts.slice(2).join("_") // ✅ FIX CRITIQUE
+    const id = parts.slice(2).join("_")
 
     const voteData = votes.get(id)
 
-    console.log("👉 voteData :", voteData)
-
-    if (!voteData) return
-
-    if (!votes.has(id)) {
+    if (!voteData) {
       return interaction.followUp({
         content: "❌ Ce planning est terminé.",
         ephemeral: true
@@ -308,12 +299,7 @@ async function finaliserSession(channel) {
     const data = votes.get(id)
     if (!data) continue
 
-    const voters = [
-      ...data.up,
-      ...data.maybe,
-      ...data.down
-    ]
-
+    const voters = [...data.up, ...data.maybe, ...data.down]
     voters.forEach(v => participants.add(v))
 
     recap += `📅 ${JOURS[data.jour]} ${data.horaire}
@@ -348,7 +334,6 @@ async function finaliserSession(channel) {
 
   await channel.send({ embeds: [resultEmbed] })
 
-  // EVENT
   if (unanimousWinner) {
 
     try {
